@@ -1,14 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from unconstrained_min import LineSearch
+from src.unconstrained_min import LineSearch
 
 class InteriorPoint:
-    def __init__(self, func, ineq_constraints, eq_constraints_mat, eq_constraints_rhs, x0):
+    def __init__(self, func, ineq_constraints, eq_constraints_mat, eq_constraints_rhs):
         self.func = func
         self.ineq_constraints = ineq_constraints
         self.eq_constraints_mat = eq_constraints_mat
         self.eq_constraints_rhs = eq_constraints_rhs
-        self.x0 = x0
         self.central_path = []  # Store points along central path
         self.objective_values = []  # Store objective values
         
@@ -26,7 +25,8 @@ class InteriorPoint:
             g_val, g_grad, g_hess = g(x)
             
             if g_val > 0:  # If constraint is violated
-                return np.inf, None, None
+                # Return a large value but with valid gradient and hessian
+                return 1e10, np.ones_like(x) * 1e10, np.eye(len(x)) * 1e10
                 
             # Add to barrier value
             barrier_val -= np.log(-g_val)
@@ -57,7 +57,7 @@ class InteriorPoint:
         # Combine objective and barrier terms
         total_val = t * f_val + barrier_val
         total_grad = t * f_grad + barrier_grad
-        total_hess = t * f_hess + barrier_hess
+        total_hess = t * f_hess + barrier_hess if f_hess is not None else barrier_hess
         
         return total_val, total_grad, total_hess
     
@@ -70,12 +70,24 @@ class InteriorPoint:
         y = np.linspace(y_range[0], y_range[1], num_points)
         X, Y = np.meshgrid(x, y)
         
+        # Determine problem dimension from first constraint
+        try:
+            # Try with 3D point first
+            test_point = np.zeros(3)
+            g_val, g_grad, _ = self.ineq_constraints[0](test_point)
+            is_3d = True
+        except ValueError:
+            # If that fails, it's a 2D problem
+            is_3d = False
+        
         # Plot inequality constraints
         for g in self.ineq_constraints:
             Z = np.zeros_like(X)
             for i in range(len(x)):
                 for j in range(len(y)):
                     point = np.array([X[i,j], Y[i,j]])
+                    if is_3d:
+                        point = np.pad(point, (0, 1))  # Add zero for z-coordinate
                     Z[i,j] = g(point)[0]
             plt.contour(X, Y, Z, levels=[0], colors='blue', alpha=0.5)
             plt.fill_between(x, y_range[0], y_range[1], where=Z[0,:] <= 0, color='blue', alpha=0.1)
@@ -89,8 +101,8 @@ class InteriorPoint:
                     y_eq = (c - a*x) / b
                     plt.plot(x, y_eq, 'r--', label=f'Eq {i+1}')
         
-        # Plot central path
-        path_points = np.array([point for point, _ in self.central_path])
+        # Plot central path (projected to 2D if needed)
+        path_points = np.array([point[:2] for point, _ in self.central_path])
         plt.plot(path_points[:,0], path_points[:,1], 'g-', label='Central Path', linewidth=2)
         plt.plot(path_points[-1,0], path_points[-1,1], 'ro', label='Final Solution')
         
@@ -99,7 +111,8 @@ class InteriorPoint:
         plt.ylabel('y')
         plt.legend()
         plt.grid(True)
-        plt.show()
+        plt.draw()
+        plt.pause(0.1)  # Small pause to ensure plot is displayed
 
     def plot_objective_values(self):
         """Plot objective values vs iteration number"""
@@ -110,7 +123,8 @@ class InteriorPoint:
         plt.xlabel('Iteration')
         plt.ylabel('Objective Value')
         plt.grid(True)
-        plt.show()
+        plt.draw()
+        plt.pause(0.1)  # Small pause to ensure plot is displayed
 
     def print_final_values(self, x):
         """Print final objective and constraint values"""
@@ -179,6 +193,7 @@ class InteriorPoint:
                 eq_residual = self.eq_constraints_mat @ x - self.eq_constraints_rhs
                 eq_violation = np.linalg.norm(eq_residual)
             
+            # Check if we're close enough to the solution
             if len(self.ineq_constraints) / t < tol and eq_violation < tol:
                 return {
                     'x': x,

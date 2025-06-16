@@ -103,26 +103,7 @@ class LineSearch:
       
     def newton(self, x0, obj_tol, param_tol, max_iter):
         """
-        Newton's method.
-
-        Parameters:
-        -----------
-        x0 : numpy.ndarray
-            Initial point
-        obj_tol : float
-            Objective function tolerance for convergence
-        param_tol : float
-            Parameter tolerance for convergence
-        max_iter : int
-            Maximum number of iterations
-
-        Returns:
-        --------
-        dict
-            Results of the optimization including:
-            - x: the minimizer (final location)
-            - f: the minimum value (final objective function value)
-            - success: whether optimization was successful
+        Newton's method with fallback to gradient descent if Hessian is singular.
         """
         if (self.obj_func(x0)[2] is None):
             raise ValueError("Hessian matrix is not provided")
@@ -130,23 +111,69 @@ class LineSearch:
         x = x0
         success = False
         self.path = [(x.copy(), self.obj_func(x)[0])]
+        
         for k in range(max_iter):
-            hessian_k = self.obj_func(x)[2]
-            gradient_k = self.obj_func(x)[1]
-            p_k = -np.linalg.inv(hessian_k) @ gradient_k
-            alpha_k = self.backtracking(x, p_k, gradient_k)
-            obj_val_k = self.obj_func(x)[0]
-            self.grad_val.append(gradient_k)
-            self.hessian_val.append(hessian_k)
-            next_x = x + alpha_k * p_k
-            self.path.append((next_x.copy(), self.obj_func(next_x)[0]))
-            if np.linalg.norm(next_x - x) < param_tol:
-                success = True
-                break
-            if np.linalg.norm(self.obj_func(next_x)[0] - obj_val_k) < obj_tol:
-                success = True
-                break
-            x = next_x
+            try:
+                hessian_k = self.obj_func(x)[2]
+                gradient_k = self.obj_func(x)[1]
+                
+                # Check if gradient is too large
+                if np.linalg.norm(gradient_k) > 1e10:
+                    return {
+                        'x': x,
+                        'f': self.obj_func(x)[0],
+                        'iter': k,
+                        'success': False
+                    }
+                
+                try:
+                    # Try Newton step
+                    p_k = -np.linalg.solve(hessian_k, gradient_k)
+                except np.linalg.LinAlgError:
+                    # If Hessian is singular, fall back to gradient descent
+                    p_k = -gradient_k
+                
+                # Check if step is too large
+                if np.linalg.norm(p_k) > 1e3:
+                    p_k = p_k / np.linalg.norm(p_k) * 1e3
+                
+                alpha_k = self.backtracking(x, p_k, gradient_k)
+                obj_val_k = self.obj_func(x)[0]
+                self.grad_val.append(gradient_k)
+                self.hessian_val.append(hessian_k)
+                
+                next_x = x + alpha_k * p_k
+                next_obj_val = self.obj_func(next_x)[0]
+                
+                # Check if objective value is too large
+                if next_obj_val > 1e10:
+                    return {
+                        'x': x,
+                        'f': obj_val_k,
+                        'iter': k,
+                        'success': False
+                    }
+                
+                self.path.append((next_x.copy(), next_obj_val))
+                
+                # Check convergence
+                if np.linalg.norm(next_x - x) < param_tol:
+                    success = True
+                    break
+                if np.linalg.norm(next_obj_val - obj_val_k) < obj_tol:
+                    success = True
+                    break
+                    
+                x = next_x
+                
+            except Exception as e:
+                print(f"Error in iteration {k}: {str(e)}")
+                return {
+                    'x': x,
+                    'f': self.obj_func(x)[0],
+                    'iter': k,
+                    'success': False
+                }
         
         return {
             'x': x,
