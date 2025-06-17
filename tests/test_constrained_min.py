@@ -36,13 +36,17 @@ class TestConstrainedMin(unittest.TestCase):
 
     def test_qp(self):
         print("\nTesting Quadratic Programming Problem:")
-        tol = 1e-8
-        max_iter = 100
+        tol = 1e-12
+        max_iter = np.inf
         x0 = self.x0[0]
         func = self.functions[0]
         ineq_constraints = self.ineq_constraints[0]
         eq_constraints_mat = self.eq_constraints_mat[0]
         eq_constraints_rhs = self.eq_constraints_rhs[0]
+
+        print("Initial inequality constraint values (QP):")
+        for i, g in enumerate(ineq_constraints):
+            print(f"g{i}(x0) = {g(x0)[0]}")
         
         minimizer = InteriorPoint(func, ineq_constraints, eq_constraints_mat, eq_constraints_rhs)
         result = minimizer.minimize(x0, tol=tol, max_iter=max_iter)
@@ -53,6 +57,10 @@ class TestConstrainedMin(unittest.TestCase):
         
         # Print final values
         minimizer.print_final_values(result['x'])
+
+        print("Final result:", result)
+        print("Final x:", result['x'])
+        print("Final f(x):", result['f'])
         
         # Assertions
         self.assertTrue(result['success'], "Interior point method failed to converge")
@@ -61,13 +69,17 @@ class TestConstrainedMin(unittest.TestCase):
 
     def test_lp(self):
         print("\nTesting Linear Programming Problem:")
-        tol = 1e-8
-        max_iter = 100
+        tol = 1e-12
+        max_iter = np.inf
         x0 = self.x0[1]
         func = self.functions[1]
         ineq_constraints = self.ineq_constraints[1]
         eq_constraints_mat = self.eq_constraints_mat[1]
         eq_constraints_rhs = self.eq_constraints_rhs[1]
+
+        print("Initial inequality constraint values (LP):")
+        for i, g in enumerate(ineq_constraints):
+            print(f"g{i}(x0) = {g(x0)[0]}")
         
         minimizer = InteriorPoint(func, ineq_constraints, eq_constraints_mat, eq_constraints_rhs)
         result = minimizer.minimize(x0, tol=tol, max_iter=max_iter)
@@ -79,6 +91,10 @@ class TestConstrainedMin(unittest.TestCase):
         # Print final values
         minimizer.print_final_values(result['x'])
         
+        print("Final result:", result)
+        print("Final x:", result['x'])
+        print("Final f(x):", result['f'])
+
         # Assertions
         self.assertTrue(result['success'], "Interior point method failed to converge")
         self.assertTrue(np.isfinite(result['f']), "Interior point method produced non-finite result")

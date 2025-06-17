@@ -40,26 +40,87 @@ class InteriorPoint:
                 barrier_hess += (g_hess / (-g_val) + 
                             np.outer(g_grad, g_grad) / (g_val * g_val))
         
-        # Add equality constraints using quadratic penalty
-        if self.eq_constraints_mat is not None and len(self.eq_constraints_mat) > 0:
-            # Compute Ax - b
-            eq_residual = self.eq_constraints_mat @ x - self.eq_constraints_rhs
-            
-            # Add penalty term to value
-            barrier_val += t * np.sum(eq_residual ** 2)
-            
-            # Add penalty term to gradient
-            barrier_grad += 2 * t * (self.eq_constraints_mat.T @ eq_residual)
-            
-            # Add penalty term to hessian
-            barrier_hess += 2 * t * (self.eq_constraints_mat.T @ self.eq_constraints_mat)
-        
         # Combine objective and barrier terms
         total_val = t * f_val + barrier_val
         total_grad = t * f_grad + barrier_grad
         total_hess = t * f_hess + barrier_hess if f_hess is not None else barrier_hess
         
         return total_val, total_grad, total_hess
+    
+    def minimize(self, x0, tol=1e-12, max_iter=100):
+        """
+        Solve the constrained optimization problem using interior point method
+        """
+        x = x0.copy()
+        t = 1.0
+        mu = 10.0
+
+        # Debugging: Print initial constraint values
+        print("Initial constraint values:")
+        for i, g in enumerate(self.ineq_constraints):
+            print(f"g{i}(x0) = {g(x0)[0]}")
+        
+        # Initialize tracking lists
+        self.central_path = [(x.copy(), self.func(x)[0])]
+        self.objective_values = [self.func(x)[0]]
+        
+        # Outer loop
+        for i in range(max_iter):
+            # Create barrier function for current t
+            def barrier_obj(x):
+                return self.barrier_function(x, t)
+            
+            # Create unconstrained minimizer
+            minimizer = LineSearch(barrier_obj, self.eq_constraints_mat)
+            
+            # Inner loop
+            result = minimizer.minimize(
+                x,
+                method='Newton',
+                obj_tol=tol,
+                param_tol=tol,
+                max_iter=1000
+            )
+            
+            if not result['success']:
+                return {
+                    'x': x,
+                    'f': self.func(x)[0],
+                    'iter': i,
+                    'success': False
+                }
+                
+            x = result['x']
+            
+            # Track central path and objective values
+            self.central_path.append((x.copy(), self.func(x)[0]))
+            self.objective_values.append(self.func(x)[0])
+            
+            # Check convergence
+            eq_violation = 0
+            if self.eq_constraints_mat is not None and len(self.eq_constraints_mat) > 0:
+                eq_residual = self.eq_constraints_mat @ x - self.eq_constraints_rhs
+                eq_violation = np.linalg.norm(eq_residual)
+            
+            # Check if we're close enough to the solution
+            print(f"[Iter {i}] t = {t:.3e}, len(ineqs)/t = {len(self.ineq_constraints)/t:.3e}, eq_violation = {eq_violation:.3e}")
+            if len(self.ineq_constraints) / t < tol and eq_violation < tol:
+                return {
+                    'x': x,
+                    'f': self.func(x)[0],
+                    'iter': i,
+                    'success': True
+                }
+                
+            t *= mu
+        
+        return {
+            'x': x,
+            'f': self.func(x)[0],
+            'iter': i,
+            'success': False
+        }
+
     
     def plot_feasible_region_and_path(self, x_range, y_range, num_points=100):
         """Plot the feasible region and central path"""
@@ -143,70 +204,3 @@ class InteriorPoint:
             for i, res in enumerate(eq_residual):
                 print(f"h{i+1}(x) = {res:.6f}")
 
-    def minimize(self, x0, tol=1e-8, max_iter=100):
-        """
-        Solve the constrained optimization problem using interior point method
-        """
-        x = x0.copy()
-        t = 1.0
-        mu = 10.0
-        
-        # Initialize tracking lists
-        self.central_path = [(x.copy(), self.func(x)[0])]
-        self.objective_values = [self.func(x)[0]]
-        
-        # Outer loop
-        for i in range(max_iter):
-            # Create barrier function for current t
-            def barrier_obj(x):
-                return self.barrier_function(x, t)
-            
-            # Create unconstrained minimizer
-            minimizer = LineSearch(barrier_obj)
-            
-            # Inner loop
-            result = minimizer.minimize(
-                x,
-                method='Newton',
-                obj_tol=tol,
-                param_tol=tol,
-                max_iter=1000
-            )
-            
-            if not result['success']:
-                return {
-                    'x': x,
-                    'f': self.func(x)[0],
-                    'iter': i,
-                    'success': False
-                }
-                
-            x = result['x']
-            
-            # Track central path and objective values
-            self.central_path.append((x.copy(), self.func(x)[0]))
-            self.objective_values.append(self.func(x)[0])
-            
-            # Check convergence
-            eq_violation = 0
-            if self.eq_constraints_mat is not None and len(self.eq_constraints_mat) > 0:
-                eq_residual = self.eq_constraints_mat @ x - self.eq_constraints_rhs
-                eq_violation = np.linalg.norm(eq_residual)
-            
-            # Check if we're close enough to the solution
-            if len(self.ineq_constraints) / t < tol and eq_violation < tol:
-                return {
-                    'x': x,
-                    'f': self.func(x)[0],
-                    'iter': i,
-                    'success': True
-                }
-                
-            t *= mu
-        
-        return {
-            'x': x,
-            'f': self.func(x)[0],
-            'iter': i,
-            'success': False
-        }

@@ -1,7 +1,7 @@
 import numpy as np
 
 class LineSearch:
-    def __init__(self, obj_func):
+    def __init__(self, obj_func, eq_A = None):
         """
         Initialize the unconstrained minimizer.
         
@@ -15,6 +15,7 @@ class LineSearch:
             The Hessian function of the objective function
         """
         self.obj_func = obj_func
+        self.eq_A = eq_A
         self.grad_val = []
         self.hessian_val = []
         self.path = []
@@ -105,7 +106,7 @@ class LineSearch:
         """
         Newton's method with fallback to gradient descent if Hessian is singular.
         """
-        if (self.obj_func(x0)[2] is None):
+        if self.obj_func(x0)[2] is None:
             raise ValueError("Hessian matrix is not provided")
         
         x = x0
@@ -116,36 +117,35 @@ class LineSearch:
             try:
                 hessian_k = self.obj_func(x)[2]
                 gradient_k = self.obj_func(x)[1]
-                
-                # Check if gradient is too large
-                if np.linalg.norm(gradient_k) > 1e10:
-                    return {
-                        'x': x,
-                        'f': self.obj_func(x)[0],
-                        'iter': k,
-                        'success': False
-                    }
-                
-                try:
-                    # Try Newton step
+
+                if self.eq_A is not None:
+                    # Hard equality constraints: solve KKT
+                    A = self.eq_A
+                    n = len(x)
+                    m = A.shape[0]
+                    KKT_mat = np.block([
+                        [hessian_k, A.T],
+                        [A, np.zeros((m, m))]
+                    ])
+                    rhs = np.concatenate([-gradient_k, np.zeros(m)])
+                    sol = np.linalg.solve(KKT_mat, rhs)
+                    p_k = sol[:n]  # Only use Newton step, ignore Lagrange multipliers
+                else:
+                    # Standard unconstrained Newton
                     p_k = -np.linalg.solve(hessian_k, gradient_k)
-                except np.linalg.LinAlgError:
-                    # If Hessian is singular, fall back to gradient descent
-                    p_k = -gradient_k
-                
-                # Check if step is too large
+
+                # Step size control
                 if np.linalg.norm(p_k) > 1e3:
                     p_k = p_k / np.linalg.norm(p_k) * 1e3
-                
+
                 alpha_k = self.backtracking(x, p_k, gradient_k)
                 obj_val_k = self.obj_func(x)[0]
                 self.grad_val.append(gradient_k)
                 self.hessian_val.append(hessian_k)
-                
+
                 next_x = x + alpha_k * p_k
                 next_obj_val = self.obj_func(next_x)[0]
-                
-                # Check if objective value is too large
+
                 if next_obj_val > 1e10:
                     return {
                         'x': x,
@@ -153,19 +153,18 @@ class LineSearch:
                         'iter': k,
                         'success': False
                     }
-                
+
                 self.path.append((next_x.copy(), next_obj_val))
-                
-                # Check convergence
+
                 if np.linalg.norm(next_x - x) < param_tol:
                     success = True
                     break
                 if np.linalg.norm(next_obj_val - obj_val_k) < obj_tol:
                     success = True
                     break
-                    
+
                 x = next_x
-                
+
             except Exception as e:
                 print(f"Error in iteration {k}: {str(e)}")
                 return {
@@ -174,7 +173,7 @@ class LineSearch:
                     'iter': k,
                     'success': False
                 }
-        
+
         return {
             'x': x,
             'f': self.obj_func(x)[0],
