@@ -1,6 +1,5 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from src.unconstrained_min import LineSearch
 
 class InteriorPoint:
     def __init__(self, func, ineq_constraints, eq_constraints_mat, eq_constraints_rhs):
@@ -23,11 +22,11 @@ class InteriorPoint:
         # Add contribution from each inequality constraint
         for g in self.ineq_constraints:
             g_val, g_grad, g_hess = g(x)
-            
-            if g_val > 0:  # If constraint is violated
-                # Return a large value but with valid gradient and hessian
-                return 1e10, np.ones_like(x) * 1e10, np.eye(len(x)) * 1e10
-                
+
+            if g_val > 0:
+                # If we're not feasible, skip this constraint
+                continue
+                            
             # Add to barrier value
             barrier_val -= np.log(-g_val)
             
@@ -36,9 +35,12 @@ class InteriorPoint:
                 barrier_grad += g_grad / (-g_val)
             
             # Add to barrier hessian
-            if g_hess is not None: 
+            if g_hess is not None:
                 barrier_hess += (g_hess / (-g_val) + 
                             np.outer(g_grad, g_grad) / (g_val * g_val))
+            else:
+                barrier_hess += np.outer(g_grad, g_grad) / (g_val * g_val)
+
         
         # Combine objective and barrier terms
         total_val = t * f_val + barrier_val
@@ -47,6 +49,88 @@ class InteriorPoint:
         
         return total_val, total_grad, total_hess
     
+    def newton_step(self, x0, tol = 10e-12, max_iter = 1000):
+        # Backtracking line search
+        def backtracking(x, p, gradient, initial_alpha=1.0, c=0.01, rho=0.5):
+            alpha = initial_alpha
+            
+            # First Wolfe condition (sufficient decrease)
+            while self.func(x + alpha * p)[0] > self.func(x)[0] + c * alpha * np.dot(gradient, p):
+                alpha = rho * alpha
+                if alpha < 1e-10:  # Prevent too small step sizes
+                    break
+                    
+            return alpha
+
+        x = x0
+        success = False
+
+        obj_val_k, gradient_k, hessian_k = self.func(x)
+
+        if hessian_k is None:
+            raise ValueError("Hessian matrix is not provided")
+                
+        for k in range(max_iter):
+            try:
+                if self.eq_constraints_mat is not None and self.eq_constraints_mat.shape[0] > 0:
+                    # Hard equality constraints: solve KKT
+                    A = self.eq_constraints_mat
+                    n = len(x)
+                    m = A.shape[0]
+                    KKT_mat = np.block([
+                        [hessian_k, A.T],
+                        [A, np.zeros((m, m))]
+                    ])
+                    rhs = np.concatenate([-gradient_k, np.zeros(m)])
+                    sol = np.linalg.solve(KKT_mat, rhs)
+                    p_k = sol[:n]
+                else:
+                    # Standard unconstrained Newton, with fallback to GD if Hessian is singular
+                    try:
+                        p_k = -np.linalg.solve(hessian_k, gradient_k)
+                    except np.linalg.LinAlgError:
+                        # If Hessian is singular, fall back to negative gradient direction
+                        print(f"[Newton {k}] Hessian is singular, falling back to gradient descent")
+                        p_k = -gradient_k
+
+                alpha_k = backtracking(x, p_k, gradient_k)
+
+                next_x = x + alpha_k * p_k
+                next_obj_val = self.func(next_x)[0]
+
+                if np.linalg.norm(next_x - x) < tol:
+                    success = True
+                    break
+                if np.linalg.norm(next_obj_val - obj_val_k) < tol:
+                    success = True
+                    break
+
+                x = next_x
+
+            except Exception as e:
+                print(f"[Newton {k}] Error: {e}")
+                # Check if we're actually at optimum
+                if np.linalg.norm(gradient_k) < tol:
+                    return {
+                        'x': x,
+                        'f': obj_val_k,
+                        'iter': k,
+                        'success': True
+                    }
+                return {
+                    'x': x,
+                    'f': obj_val_k,
+                    'iter': k,
+                    'success': False
+                }
+
+        return {
+            'x': x,
+            'f': obj_val_k,
+            'iter': k,
+            'success': success
+        }
+
     def minimize(self, x0, tol=1e-12):
         """
         Solve the constrained optimization problem using interior point method
@@ -55,13 +139,6 @@ class InteriorPoint:
         t = 1.0
         mu = 10.0
 
-        # Debugging: Print initial constraint values
-        print("\nInitial point and constraints:")
-        print(f"x0 = {x}")
-        print(f"f(x0) = {self.func(x)[0]}")
-        for i, g in enumerate(self.ineq_constraints):
-            print(f"f{i}(x0) = {g(x0)[0]}")
-        
         # Initialize tracking lists
         self.central_path = [(x.copy(), self.func(x)[0])]
         self.objective_values = [self.func(x)[0]]
@@ -69,25 +146,16 @@ class InteriorPoint:
         i = 0
 
         # Outer loop
-        max_outer_iter = 100  # Increased max iterations
+        max_outer_iter = 100
         while i < max_outer_iter:
             # Create barrier function for current t
             def barrier_obj(x):
                 return self.barrier_function(x, t)
             
-            # Create unconstrained minimizer
-            minimizer = LineSearch(barrier_obj, self.eq_constraints_mat)
-            
             # Inner loop
-            result = minimizer.minimize(
-                x,
-                method='Newton',
-                obj_tol=tol,
-                param_tol=tol,
-                max_iter=1000
-            )
-            
-            if not result['success']:
+            newton_result = self.newton_step(x, tol)
+                        
+            if not newton_result['success']:
                 print(f"\nInner minimization failed at iteration {i}")
                 return {
                     'x': x,
@@ -96,7 +164,7 @@ class InteriorPoint:
                     'success': False
                 }
                 
-            x = result['x']
+            x = newton_result['x']
             
             # Track central path and objective values
             self.central_path.append((x.copy(), self.func(x)[0]))
@@ -109,7 +177,6 @@ class InteriorPoint:
                 eq_violation = np.linalg.norm(eq_residual)
             
             # Check if we're close enough to the solution
-            print(f"[Outer Iter {i}] t = {t:.3e}, len(ineqs)/t = {len(self.ineq_constraints)/t:.3e}, eq_violation = {eq_violation:.3e}")
             if len(self.ineq_constraints) / t < tol and eq_violation < tol:
                 print("\nConverged! All constraints satisfied within tolerance.")
                 return {

@@ -4,7 +4,7 @@ def quadratic(x):
     if (len(x) != 3):
         raise ValueError("x must be a 3D array")
     Q = np.array([[2, 0, 0], [0, 2, 0], [0, 0, 2]])
-    v = np.array([0, 0, 1])
+    v = np.array([0, 0, 2])
     c = 1
     f_x = 0.5 * x @ Q @ x.T + v @ x.T + c
     return [f_x, Q @ x + v, Q]

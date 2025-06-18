@@ -22,7 +22,8 @@ class TestConstrainedMin(unittest.TestCase):
         
         # Test setup
         self.functions = [quadratic, linear]
-        self.ineq_constraints = [[quadratic_ineq1, quadratic_ineq2, quadratic_ineq3], [linear_ineq1, linear_ineq2, linear_ineq3, linear_ineq4]]
+        self.ineq_constraints = {'qp': [quadratic_ineq1, quadratic_ineq2, quadratic_ineq3], 
+                                 'lp': [linear_ineq1, linear_ineq2, linear_ineq3, linear_ineq4]}
         self.eq_contraints_mat = {'qp': np.array([[1, 1, 1]]), 'lp': None}
         self.eq_constraints_rhs = {'qp': np.array([1]), 'lp': None}
         self.x0 = [np.array([0.1, 0.2, 0.7]), np.array([0.5, 0.75])]
@@ -39,7 +40,7 @@ class TestConstrainedMin(unittest.TestCase):
         tol = 1e-12
         x0 = self.x0[0]
         func = self.functions[0]
-        ineq_constraints = self.ineq_constraints[0]
+        ineq_constraints = self.ineq_constraints['qp']
         eq_constraints_mat = self.eq_contraints_mat['qp']
         eq_constraints_rhs = self.eq_constraints_rhs['qp']
 
@@ -70,7 +71,7 @@ class TestConstrainedMin(unittest.TestCase):
         tol = 1e-12
         x0 = self.x0[1]
         func = self.functions[1]
-        ineq_constraints = self.ineq_constraints[1]
+        ineq_constraints = self.ineq_constraints['lp']
         eq_constraints_mat = self.eq_contraints_mat['lp']
         eq_constraints_rhs = self.eq_constraints_rhs['lp']
 
