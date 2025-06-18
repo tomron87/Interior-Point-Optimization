@@ -7,8 +7,8 @@ class InteriorPoint:
         self.ineq_constraints = ineq_constraints
         self.eq_constraints_mat = eq_constraints_mat
         self.eq_constraints_rhs = eq_constraints_rhs
-        self.central_path = []  # Store points along central path
-        self.objective_values = []  # Store objective values
+        self.central_path = []
+        self.objective_values = []
         
     def barrier_function(self, x, t):
         # Get objective function values
@@ -41,6 +41,7 @@ class InteriorPoint:
             else:
                 barrier_hess += np.outer(g_grad, g_grad) / (g_val * g_val)
 
+        print(f"[Barrier] barrier_val={barrier_val}, barrier_grad={barrier_grad}, barrier_hess=\n{barrier_hess}")
         
         # Combine objective and barrier terms
         total_val = t * f_val + barrier_val
@@ -53,13 +54,26 @@ class InteriorPoint:
         # Backtracking line search
         def backtracking(x, p, gradient, initial_alpha=1.0, c=0.01, rho=0.5):
             alpha = initial_alpha
-            
-            # First Wolfe condition (sufficient decrease)
-            while self.func(x + alpha * p)[0] > self.func(x)[0] + c * alpha * np.dot(gradient, p):
-                alpha = rho * alpha
-                if alpha < 1e-10:  # Prevent too small step sizes
-                    break
-                    
+            fx = self.func(x)[0]
+            while True:
+                x_candidate = x + alpha * p
+                candidate_val = self.func(x_candidate)[0]
+                
+                # Feasibility check: If not finite, reduce step
+                if not np.isfinite(candidate_val):
+                    print(f"[Backtracking] candidate_val is not finite (got {candidate_val}) at alpha={alpha}, reducing alpha")
+                    alpha *= rho
+                    if alpha < 1e-10:
+                        break
+                    continue
+
+                # Sufficient decrease (Wolfe)
+                if candidate_val > fx + c * alpha * np.dot(gradient, p):
+                    alpha *= rho
+                    if alpha < 1e-10:
+                        break
+                    continue
+
             return alpha
 
         x = x0
