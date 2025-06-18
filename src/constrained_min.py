@@ -50,32 +50,31 @@ class InteriorPoint:
         
         return total_val, total_grad, total_hess
     
+    def backtracking(self, x, p, gradient, initial_alpha=1.0, c=0.01, rho=0.5):
+        alpha = initial_alpha
+        fx = self.func(x)[0]
+        while True:
+            x_candidate = x + alpha * p
+            candidate_val = self.func(x_candidate)[0]
+
+            # Feasibility check: If not feasible, reduce step
+            if not all(g(x_candidate)[0] <= 0 for g in self.ineq_constraints):
+                print(f"[Backtracking] x_candidate is not feasible at alpha={alpha}, reducing alpha")
+                alpha *= rho
+                if alpha < 1e-10:
+                    break
+                continue
+            
+            # Sufficient decrease (Wolfe)
+            if candidate_val > fx + c * alpha * np.dot(gradient, p):
+                alpha *= rho
+                if alpha < 1e-10:
+                    break
+                continue
+
+        return alpha
+
     def newton_step(self, x0, tol = 10e-12, max_iter = 1000):
-        # Backtracking line search
-        def backtracking(x, p, gradient, initial_alpha=1.0, c=0.01, rho=0.5):
-            alpha = initial_alpha
-            fx = self.func(x)[0]
-            while True:
-                x_candidate = x + alpha * p
-                candidate_val = self.func(x_candidate)[0]
-                
-                # Feasibility check: If not finite, reduce step
-                if not np.isfinite(candidate_val):
-                    print(f"[Backtracking] candidate_val is not finite (got {candidate_val}) at alpha={alpha}, reducing alpha")
-                    alpha *= rho
-                    if alpha < 1e-10:
-                        break
-                    continue
-
-                # Sufficient decrease (Wolfe)
-                if candidate_val > fx + c * alpha * np.dot(gradient, p):
-                    alpha *= rho
-                    if alpha < 1e-10:
-                        break
-                    continue
-
-            return alpha
-
         x = x0
         success = False
 
@@ -107,7 +106,7 @@ class InteriorPoint:
                         print(f"[Newton {k}] Hessian is singular, falling back to gradient descent")
                         p_k = -gradient_k
 
-                alpha_k = backtracking(x, p_k, gradient_k)
+                alpha_k = self.backtracking(x, p_k, gradient_k)
 
                 next_x = x + alpha_k * p_k
                 next_obj_val = self.func(next_x)[0]
@@ -167,7 +166,7 @@ class InteriorPoint:
                 return self.barrier_function(x, t)
             
             # Inner loop
-            newton_result = self.newton_step(x, tol)
+            newton_result = self.newton_step(barrier_obj, x, tol)
                         
             if not newton_result['success']:
                 print(f"\nInner minimization failed at iteration {i}")
