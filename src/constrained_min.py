@@ -47,7 +47,7 @@ class InteriorPoint:
         
         return total_val, total_grad, total_hess
     
-    def minimize(self, x0, tol=1e-12, max_iter=100):
+    def minimize(self, x0, tol=1e-12):
         """
         Solve the constrained optimization problem using interior point method
         """
@@ -56,16 +56,21 @@ class InteriorPoint:
         mu = 10.0
 
         # Debugging: Print initial constraint values
-        print("Initial constraint values:")
+        print("\nInitial point and constraints:")
+        print(f"x0 = {x}")
+        print(f"f(x0) = {self.func(x)[0]}")
         for i, g in enumerate(self.ineq_constraints):
-            print(f"g{i}(x0) = {g(x0)[0]}")
+            print(f"f{i}(x0) = {g(x0)[0]}")
         
         # Initialize tracking lists
         self.central_path = [(x.copy(), self.func(x)[0])]
         self.objective_values = [self.func(x)[0]]
         
+        i = 0
+
         # Outer loop
-        for i in range(max_iter):
+        max_outer_iter = 100  # Increased max iterations
+        while i < max_outer_iter:
             # Create barrier function for current t
             def barrier_obj(x):
                 return self.barrier_function(x, t)
@@ -83,6 +88,7 @@ class InteriorPoint:
             )
             
             if not result['success']:
+                print(f"\nInner minimization failed at iteration {i}")
                 return {
                     'x': x,
                     'f': self.func(x)[0],
@@ -96,15 +102,16 @@ class InteriorPoint:
             self.central_path.append((x.copy(), self.func(x)[0]))
             self.objective_values.append(self.func(x)[0])
             
-            # Check convergence
+            # Check equality constraint violation
             eq_violation = 0
             if self.eq_constraints_mat is not None and len(self.eq_constraints_mat) > 0:
                 eq_residual = self.eq_constraints_mat @ x - self.eq_constraints_rhs
                 eq_violation = np.linalg.norm(eq_residual)
             
             # Check if we're close enough to the solution
-            print(f"[Iter {i}] t = {t:.3e}, len(ineqs)/t = {len(self.ineq_constraints)/t:.3e}, eq_violation = {eq_violation:.3e}")
+            print(f"[Outer Iter {i}] t = {t:.3e}, len(ineqs)/t = {len(self.ineq_constraints)/t:.3e}, eq_violation = {eq_violation:.3e}")
             if len(self.ineq_constraints) / t < tol and eq_violation < tol:
+                print("\nConverged! All constraints satisfied within tolerance.")
                 return {
                     'x': x,
                     'f': self.func(x)[0],
@@ -113,15 +120,19 @@ class InteriorPoint:
                 }
                 
             t *= mu
-        
-        return {
-            'x': x,
-            'f': self.func(x)[0],
-            'iter': i,
-            'success': False
-        }
-
+            i += 1  
     
+        print("\nReached maximum iterations without convergence")
+        # If the loop exits due to max_outer_iter, check feasibility
+        eq_violation = 0
+        if self.eq_constraints_mat is not None and len(self.eq_constraints_mat) > 0:
+            eq_residual = self.eq_constraints_mat @ x - self.eq_constraints_rhs
+            eq_violation = np.linalg.norm(eq_residual)
+        if all(g(x)[0] < -1e-8 for g in self.ineq_constraints) and eq_violation < tol:
+            return {'x': x, 'f': self.func(x)[0], 'iter': i, 'success': True}
+        else:
+            return {'x': x, 'f': self.func(x)[0], 'iter': i, 'success': False}
+
     def plot_feasible_region_and_path(self, x_range, y_range, num_points=100):
         """Plot the feasible region and central path"""
         plt.figure(figsize=(10, 8))

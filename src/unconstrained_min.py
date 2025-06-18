@@ -115,10 +115,13 @@ class LineSearch:
         
         for k in range(max_iter):
             try:
+                print(f"[Newton {k}] x = {x}, f(x) = {self.obj_func(x)[0]}")
                 hessian_k = self.obj_func(x)[2]
                 gradient_k = self.obj_func(x)[1]
+                print(f"[Newton {k}] gradient = {gradient_k}, norm = {np.linalg.norm(gradient_k)}")
+                print(f"[Newton {k}] hessian =\n{hessian_k}")
 
-                if self.eq_A is not None:
+                if self.eq_A is not None and self.eq_A.shape[0] > 0:
                     # Hard equality constraints: solve KKT
                     A = self.eq_A
                     n = len(x)
@@ -131,14 +134,16 @@ class LineSearch:
                     sol = np.linalg.solve(KKT_mat, rhs)
                     p_k = sol[:n]  # Only use Newton step, ignore Lagrange multipliers
                 else:
-                    # Standard unconstrained Newton
-                    p_k = -np.linalg.solve(hessian_k, gradient_k)
+                    # Standard unconstrained Newton, with fallback to GD if Hessian is singular
+                    try:
+                        p_k = -np.linalg.solve(hessian_k, gradient_k)
+                    except np.linalg.LinAlgError:
+                        # If Hessian is singular, fall back to negative gradient direction
+                        p_k = -gradient_k
 
-                # Step size control
-                if np.linalg.norm(p_k) > 1e3:
-                    p_k = p_k / np.linalg.norm(p_k) * 1e3
-
+                print(f"[Newton {k}] p_k = {p_k}, norm = {np.linalg.norm(p_k)}")
                 alpha_k = self.backtracking(x, p_k, gradient_k)
+                print(f"[Newton {k}] alpha = {alpha_k}")
                 obj_val_k = self.obj_func(x)[0]
                 self.grad_val.append(gradient_k)
                 self.hessian_val.append(hessian_k)
@@ -146,34 +151,38 @@ class LineSearch:
                 next_x = x + alpha_k * p_k
                 next_obj_val = self.obj_func(next_x)[0]
 
-                if next_obj_val > 1e10:
-                    return {
-                        'x': x,
-                        'f': obj_val_k,
-                        'iter': k,
-                        'success': False
-                    }
-
+                print(f"[Newton {k}] next_x = {next_x}, next_f(x) = {next_obj_val}")
                 self.path.append((next_x.copy(), next_obj_val))
 
                 if np.linalg.norm(next_x - x) < param_tol:
+                    print(f"[Newton {k}] Converged by param_tol (step size).")
                     success = True
                     break
                 if np.linalg.norm(next_obj_val - obj_val_k) < obj_tol:
+                    print(f"[Newton {k}] Converged by obj_tol (objective).")
                     success = True
                     break
 
                 x = next_x
 
             except Exception as e:
-                print(f"Error in iteration {k}: {str(e)}")
+                print(f"[Newton {k}] Exception: {e}")
+                print(f"[Newton {k}] x = {x}, gradient = {gradient_k}, norm = {np.linalg.norm(gradient_k)}")
+                # Check if we're actually at optimum
+                if np.linalg.norm(gradient_k) < param_tol:
+                    return {
+                        'x': x,
+                        'f': self.obj_func(x)[0],
+                        'iter': k,
+                        'success': True
+                    }
                 return {
                     'x': x,
                     'f': self.obj_func(x)[0],
                     'iter': k,
                     'success': False
                 }
-
+        print(f"[Newton {k}] Returning: x = {x}, f = {self.obj_func(x)[0]}, success = {success}")
         return {
             'x': x,
             'f': self.obj_func(x)[0],
