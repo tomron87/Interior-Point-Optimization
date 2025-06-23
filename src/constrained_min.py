@@ -7,10 +7,11 @@ class InteriorPoint:
         self.ineq_constraints = ineq_constraints
         self.eq_constraints_mat = eq_constraints_mat
         self.eq_constraints_rhs = eq_constraints_rhs
+        self.current_t = 1.0
         self.central_path = []
         self.objective_values = []
         
-    def barrier_function(self, x, t):
+    def barrier_function(self, x):
         # Get objective function values
         f_val, f_grad, f_hess = self.func(x)
         
@@ -24,8 +25,7 @@ class InteriorPoint:
             g_val, g_grad, g_hess = g(x)
 
             if g_val > 0:
-                # If we're not feasible, skip this constraint
-                continue
+                return np.inf, np.inf, np.inf
                             
             # Add to barrier value
             barrier_val -= np.log(-g_val)
@@ -44,43 +44,50 @@ class InteriorPoint:
         print(f"[Barrier] barrier_val={barrier_val}, barrier_grad={barrier_grad}, barrier_hess=\n{barrier_hess}")
         
         # Combine objective and barrier terms
-        total_val = t * f_val + barrier_val
-        total_grad = t * f_grad + barrier_grad
-        total_hess = t * f_hess + barrier_hess if f_hess is not None else barrier_hess
+        total_val = self.current_t * f_val + barrier_val
+        total_grad = self.current_t * f_grad + barrier_grad
+        total_hess = self.current_t * f_hess + barrier_hess if f_hess is not None else barrier_hess
         
         return total_val, total_grad, total_hess
     
-    def backtracking(self, x, p, gradient, initial_alpha=1.0, c=0.01, rho=0.5):
+    def backtracking(self, x, p, gradient, initial_alpha=1.0, c=0.01, rho=0.5, max_steps=50):
         alpha = initial_alpha
-        fx = self.func(x)[0]
-        while True:
+        fx = self.barrier_function(x)[0]
+        for _ in range(max_steps):
             x_candidate = x + alpha * p
-            candidate_val = self.func(x_candidate)[0]
+            candidate_val = self.barrier_function(x_candidate)[0]
 
             # Feasibility check: If not feasible, reduce step
-            if not all(g(x_candidate)[0] <= 0 for g in self.ineq_constraints):
+            if not np.isfinite(candidate_val):
                 print(f"[Backtracking] x_candidate is not feasible at alpha={alpha}, reducing alpha")
                 alpha *= rho
                 if alpha < 1e-10:
-                    break
+                    print("[Backtracking] Alpha too small, exiting backtracking.")
+                    return 0.0
                 continue
             
             # Sufficient decrease (Wolfe)
             if candidate_val > fx + c * alpha * np.dot(gradient, p):
+                print(f"[Backtracking] Wolfe not satisfied at alpha={alpha}, reducing alpha")
                 alpha *= rho
                 if alpha < 1e-10:
-                    break
+                    print("[Backtracking] Alpha too small after Wolfe, exiting backtracking.")
+                    return 0.0
                 continue
 
+            print(f"[Backtracking] Wolfe satisfied at alpha={alpha}")
+            return alpha
+
+        print("[Backtracking] Max steps reached, exiting backtracking.")
         return alpha
 
     def newton_step(self, x0, tol = 10e-12, max_iter = 1000):
         x = x0
         success = False
 
-        obj_val_k, gradient_k, hessian_k = self.func(x)
+        obj_val_k, gradient_k, hessian_k = self.barrier_function(x)
 
-        if hessian_k is None:
+        if hessian_k is not None and not np.isfinite(hessian_k).all():
             raise ValueError("Hessian matrix is not provided")
                 
         for k in range(max_iter):
@@ -106,10 +113,21 @@ class InteriorPoint:
                         print(f"[Newton {k}] Hessian is singular, falling back to gradient descent")
                         p_k = -gradient_k
 
+                print(f"[Newton {k}] p_k={p_k}, grad={gradient_k}, grad.T@p_k={np.dot(gradient_k, p_k)}")
+
                 alpha_k = self.backtracking(x, p_k, gradient_k)
+                if alpha_k == 0.0:
+                    print(f"[Newton {k}] Backtracking failed, exiting Newton step.")
+                    return {
+                        'x': x,
+                        'f': obj_val_k,
+                        'iter': k,
+                        'success': False
+                    }
+                
 
                 next_x = x + alpha_k * p_k
-                next_obj_val = self.func(next_x)[0]
+                next_obj_val = self.barrier_function(next_x)[0]
 
                 if np.linalg.norm(next_x - x) < tol:
                     success = True
@@ -149,7 +167,6 @@ class InteriorPoint:
         Solve the constrained optimization problem using interior point method
         """
         x = x0.copy()
-        t = 1.0
         mu = 10.0
 
         # Initialize tracking lists
@@ -161,12 +178,8 @@ class InteriorPoint:
         # Outer loop
         max_outer_iter = 100
         while i < max_outer_iter:
-            # Create barrier function for current t
-            def barrier_obj(x):
-                return self.barrier_function(x, t)
-            
             # Inner loop
-            newton_result = self.newton_step(barrier_obj, x, tol)
+            newton_result = self.newton_step(x, tol)
                         
             if not newton_result['success']:
                 print(f"\nInner minimization failed at iteration {i}")
@@ -190,7 +203,7 @@ class InteriorPoint:
                 eq_violation = np.linalg.norm(eq_residual)
             
             # Check if we're close enough to the solution
-            if len(self.ineq_constraints) / t < tol and eq_violation < tol:
+            if len(self.ineq_constraints) / self.current_t < tol and eq_violation < tol:
                 print("\nConverged! All constraints satisfied within tolerance.")
                 return {
                     'x': x,
@@ -199,7 +212,7 @@ class InteriorPoint:
                     'success': True
                 }
                 
-            t *= mu
+            self.current_t *= mu
             i += 1  
     
         print("\nReached maximum iterations without convergence")
