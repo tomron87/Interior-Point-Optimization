@@ -15,7 +15,7 @@ class TestConstrainedMin(unittest.TestCase):
             
         # Set up logging to file
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        self.log_file = os.path.join(self.logs_dir, f'test_results_{timestamp}.log')
+        self.log_file = os.path.join(self.logs_dir, f'test_results_{self._testMethodName}_{timestamp}.log')
         self.original_stdout = sys.stdout
         self.log = open(self.log_file, 'w')
         sys.stdout = self.log
@@ -51,9 +51,11 @@ class TestConstrainedMin(unittest.TestCase):
         minimizer = InteriorPoint(func, ineq_constraints, eq_constraints_mat, eq_constraints_rhs)
         result = minimizer.minimize(x0, tol=tol)
         
-        # Plot results
-        minimizer.plot_feasible_region_and_path(self.plot_ranges[0], self.plot_ranges[1])
-        minimizer.plot_objective_values()
+        # Plot results and save to file
+        fig1 = minimizer.plot_feasible_region_and_path(self.plot_ranges[0], self.plot_ranges[1])
+        fig1.savefig(f"{self._testMethodName}_feasible_region.png")
+        fig2 = minimizer.plot_objective_values()
+        fig2.savefig(f"{self._testMethodName}_objective_values.png")
         
         # Print final values
         minimizer.print_final_values(result['x'])
@@ -82,9 +84,11 @@ class TestConstrainedMin(unittest.TestCase):
         minimizer = InteriorPoint(func, ineq_constraints, eq_constraints_mat, eq_constraints_rhs)
         result = minimizer.minimize(x0, tol=tol)
         
-        # Plot results
-        minimizer.plot_feasible_region_and_path(self.plot_ranges[0], self.plot_ranges[1])
-        minimizer.plot_objective_values()
+        # Plot results and save to file
+        fig1 = minimizer.plot_feasible_region_and_path(self.plot_ranges[0], self.plot_ranges[1])
+        fig1.savefig(f"{self._testMethodName}_feasible_region.png")
+        fig2 = minimizer.plot_objective_values()
+        fig2.savefig(f"{self._testMethodName}_objective_values.png")
         
         # Print final values
         minimizer.print_final_values(result['x'])

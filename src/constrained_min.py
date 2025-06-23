@@ -38,25 +38,30 @@ class InteriorPoint:
             return val, grad, hess
         return val, grad
             
-    def backtracking(self, x, p, initial_alpha=1.0, c=0.01, rho=0.5, max_steps=20):
+    def backtracking(self, x, p, initial_alpha=1.0, c=0.5, rho=0.5, max_steps=30):
         alpha = initial_alpha
+        fx, gx = self.barrier_function(x, hessian_flag=False)
+        last_feasible_alpha = None
+        last_feasible_val = None
         for _ in range(max_steps):
             x_candidate = x + alpha * p
-            candidate_val = self.barrier_function(x_candidate, hessian_flag=False)[0]
-            fx, gx = self.barrier_function(x, hessian_flag=False)
-
-            if candidate_val > fx + c * alpha * np.dot(gx, p) or np.isnan(candidate_val):
-                print(f"[Backtracking] Wolfe not satisfied at alpha={alpha}, reducing alpha")
+            candidate_val, _ = self.barrier_function(x_candidate, hessian_flag=False)
+            if np.isnan(candidate_val) or np.isinf(candidate_val):
                 alpha *= rho
-            else:
-                print(f"[Backtracking] Wolfe satisfied at alpha={alpha}")
-                break
-        
-        if alpha < 1e-12:
-            print("[Backtracking] Alpha too small; line search failed.")
-            return 0.0
-
-        return alpha
+                continue
+            if candidate_val <= fx + c * alpha * np.dot(gx, p):
+                return alpha
+            # If function value decreased and candidate is feasible, remember it
+            if candidate_val < fx:
+                last_feasible_alpha = alpha
+                last_feasible_val = candidate_val
+            alpha *= rho
+        # After max_steps, take last feasible step if it at least decreases the function
+        if last_feasible_alpha is not None:
+            print("[Backtracking] Accepting last feasible alpha that decreases fx:", last_feasible_alpha)
+            return last_feasible_alpha
+        print("[Backtracking] Line search failed; no feasible decrease found.")
+        return 0.0
 
     def kkt_solver(self):
         if self.eq_constraints_mat is None or self.eq_constraints_mat.shape[0] == 0:
@@ -113,6 +118,7 @@ class InteriorPoint:
         for k in range(max_iter):
             rhs = pk_resolver(x)
             p_k = np.linalg.solve(b_k, rhs)
+            print(f"[Newton {k}] dot(gx, p_k) = {np.dot(gradient_k, p_k)}")
             alpha_k = self.backtracking(x, p_k)
             if alpha_k * np.linalg.norm(p_k) < param_tol:
                 success = True
@@ -187,8 +193,8 @@ class InteriorPoint:
         }
          
     def plot_feasible_region_and_path(self, x_range, y_range, num_points=100):
-        """Plot the feasible region and central path"""
-        plt.figure(figsize=(10, 8))
+        """Plot the feasible region and central path, and return the matplotlib Figure object."""
+        fig, ax = plt.subplots(figsize=(10, 8))
         
         # Create grid for plotting
         x = np.linspace(x_range[0], x_range[1], num_points)
@@ -214,8 +220,8 @@ class InteriorPoint:
                     if is_3d:
                         point = np.pad(point, (0, 1))  # Add zero for z-coordinate
                     Z[i,j] = g(point)[0]
-            plt.contour(X, Y, Z, levels=[0], colors='blue', alpha=0.5)
-            plt.fill_between(x, y_range[0], y_range[1], where=Z[0,:] <= 0, color='blue', alpha=0.1)
+            ax.contour(X, Y, Z, levels=[0], colors='blue', alpha=0.5)
+            ax.fill_between(x, y_range[0], y_range[1], where=Z[0,:] <= 0, color='blue', alpha=0.1)
         
         # Plot equality constraints
         if self.eq_constraints_mat is not None:
@@ -224,32 +230,32 @@ class InteriorPoint:
                 c = self.eq_constraints_rhs[i]
                 if b != 0:
                     y_eq = (c - a*x) / b
-                    plt.plot(x, y_eq, 'r--', label=f'Eq {i+1}')
+                    ax.plot(x, y_eq, 'r--', label=f'Eq {i+1}')
         
         # Plot central path (projected to 2D if needed)
         path_points = np.array([point[:2] for point, _ in self.central_path])
-        plt.plot(path_points[:,0], path_points[:,1], 'g-', label='Central Path', linewidth=2)
-        plt.plot(path_points[-1,0], path_points[-1,1], 'ro', label='Final Solution')
+        ax.plot(path_points[:,0], path_points[:,1], 'g-', label='Central Path', linewidth=2)
+        ax.plot(path_points[-1,0], path_points[-1,1], 'ro', label='Final Solution')
         
-        plt.title('Feasible Region and Central Path')
-        plt.xlabel('x')
-        plt.ylabel('y')
-        plt.legend()
-        plt.grid(True)
-        plt.draw()
-        plt.pause(0.1)  # Small pause to ensure plot is displayed
+        ax.set_title('Feasible Region and Central Path')
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.legend()
+        ax.grid(True)
+        # Do not show or pause, just return the figure
+        return fig
 
     def plot_objective_values(self):
-        """Plot objective values vs iteration number"""
-        plt.figure(figsize=(10, 6))
+        """Plot objective values vs iteration number and return the matplotlib Figure object."""
+        fig, ax = plt.subplots(figsize=(10, 6))
         iterations = range(len(self.objective_values))
-        plt.plot(iterations, self.objective_values, 'b-', linewidth=2)
-        plt.title('Objective Value vs Iteration')
-        plt.xlabel('Iteration')
-        plt.ylabel('Objective Value')
-        plt.grid(True)
-        plt.draw()
-        plt.pause(0.1)  # Small pause to ensure plot is displayed
+        ax.plot(iterations, self.objective_values, 'b-', linewidth=2)
+        ax.set_title('Objective Value vs Iteration')
+        ax.set_xlabel('Iteration')
+        ax.set_ylabel('Objective Value')
+        ax.grid(True)
+        # Do not show or pause, just return the figure
+        return fig
 
     def print_final_values(self, x):
         """Print final objective and constraint values"""
