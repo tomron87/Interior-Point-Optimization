@@ -8,153 +8,123 @@ class InteriorPoint:
         self.eq_constraints_mat = eq_constraints_mat
         self.eq_constraints_rhs = eq_constraints_rhs
         self.current_t = 1.0
+        self.mu = 10.0
         self.central_path = []
         self.objective_values = []
         
-    def barrier_function(self, x):
-        # Get objective function values
+    def barrier_function(self, x, hessian_flag: bool = True):
         f_val, f_grad, f_hess = self.func(x)
+        val = self.current_t * f_val
+        grad = self.current_t * f_grad.copy()
+        if hessian_flag:
+            if f_hess is not None:
+                hess = self.current_t * f_hess.copy()
+            else:
+                hess = np.zeros((x.size, x.size))
         
-        # Initialize barrier terms
-        barrier_val = 0
-        barrier_grad = np.zeros_like(x)
-        barrier_hess = np.zeros((len(x), len(x)))
-        
-        # Add contribution from each inequality constraint
         for g in self.ineq_constraints:
             g_val, g_grad, g_hess = g(x)
-
-            if g_val > 0:
-                return np.inf, np.inf, np.inf
-                            
-            # Add to barrier value
-            barrier_val -= np.log(-g_val)
+            if g_val >= 0:
+                if hessian_flag:
+                    return np.inf, None, None
+                return np.inf, None
+            val -= np.log(-g_val)
+            grad += -1.0 / g_val * g_grad
+            if hessian_flag:
+                hess += np.outer(g_grad, g_grad) / (g_val**2)
+                if g_hess is not None:
+                    hess -= g_hess / g_val
+        if hessian_flag:
+            return val, grad, hess
+        return val, grad
             
-            # Add to barrier gradient
-            if g_grad is not None:
-                barrier_grad += g_grad / (-g_val)
-            
-            # Add to barrier hessian
-            if g_hess is not None:
-                barrier_hess += (g_hess / (-g_val) + 
-                            np.outer(g_grad, g_grad) / (g_val * g_val))
-            else:
-                barrier_hess += np.outer(g_grad, g_grad) / (g_val * g_val)
-
-        print(f"[Barrier] barrier_val={barrier_val}, barrier_grad={barrier_grad}, barrier_hess=\n{barrier_hess}")
-        
-        # Combine objective and barrier terms
-        total_val = self.current_t * f_val + barrier_val
-        total_grad = self.current_t * f_grad + barrier_grad
-        total_hess = self.current_t * f_hess + barrier_hess if f_hess is not None else barrier_hess
-        
-        return total_val, total_grad, total_hess
-    
-    def backtracking(self, x, p, gradient, initial_alpha=1.0, c=0.01, rho=0.5, max_steps=50):
+    def backtracking(self, x, p, initial_alpha=1.0, c=0.01, rho=0.5, max_steps=20):
         alpha = initial_alpha
-        fx = self.barrier_function(x)[0]
         for _ in range(max_steps):
             x_candidate = x + alpha * p
-            candidate_val = self.barrier_function(x_candidate)[0]
+            candidate_val = self.barrier_function(x_candidate, hessian_flag=False)[0]
+            fx, gx = self.barrier_function(x, hessian_flag=False)
 
-            # Feasibility check: If not feasible, reduce step
-            if not np.isfinite(candidate_val):
-                print(f"[Backtracking] x_candidate is not feasible at alpha={alpha}, reducing alpha")
-                alpha *= rho
-                if alpha < 1e-10:
-                    print("[Backtracking] Alpha too small, exiting backtracking.")
-                    return 0.0
-                continue
-            
-            # Sufficient decrease (Wolfe)
-            if candidate_val > fx + c * alpha * np.dot(gradient, p):
+            if candidate_val > fx + c * alpha * np.dot(gx, p) or np.isnan(candidate_val):
                 print(f"[Backtracking] Wolfe not satisfied at alpha={alpha}, reducing alpha")
                 alpha *= rho
-                if alpha < 1e-10:
-                    print("[Backtracking] Alpha too small after Wolfe, exiting backtracking.")
-                    return 0.0
-                continue
+            else:
+                print(f"[Backtracking] Wolfe satisfied at alpha={alpha}")
+                break
+        
+        if alpha < 1e-12:
+            print("[Backtracking] Alpha too small; line search failed.")
+            return 0.0
 
-            print(f"[Backtracking] Wolfe satisfied at alpha={alpha}")
-            return alpha
-
-        print("[Backtracking] Max steps reached, exiting backtracking.")
         return alpha
 
-    def newton_step(self, x0, tol = 10e-12, max_iter = 1000):
+    def kkt_solver(self):
+        if self.eq_constraints_mat is None or self.eq_constraints_mat.shape[0] == 0:
+            # If there are no equality constraints, use plain Newton step direction
+            def pk_resolver(x):
+                _, gradient, hessian = self.barrier_function(x)
+                try:
+                    return -np.linalg.solve(hessian, gradient)
+                except np.linalg.LinAlgError:
+                    return -gradient
+                
+            return pk_resolver
+
+        def pk_resolver(x, fallback_to_gd: bool = True):
+            obj_val, gradient, hessian = self.func(x)
+            A = self.eq_constraints_mat
+            n = len(x)
+            m = A.shape[0]
+            KKT_mat = np.block([
+                [hessian, A.T],
+                [A, np.zeros((m, m))]
+            ])
+            rhs = np.concatenate([-gradient, np.zeros(m)])
+            try:
+                sol = np.linalg.solve(KKT_mat, rhs)
+                p = sol[:n]
+                if np.dot(gradient, p) >= 0:
+                    raise ValueError
+                return p
+            except (np.linalg.LinAlgError, ValueError):
+                if not fallback_to_gd:
+                    raise
+                z = -gradient
+                ATA_inv = np.linalg.inv(A @ A.T)
+                p_proj = z - A.T @ (ATA_inv @ (A @ z))
+                return p_proj
+        
+        return pk_resolver
+    
+
+    def newton_step(self, 
+                    x0, 
+                    b_k, 
+                    pk_resolver, 
+                    alpha_resolver,
+                    obj_tol=1e-8,
+                    param_tol=1e-8,
+                    max_iter=10000):
         x = x0
         success = False
 
         obj_val_k, gradient_k, hessian_k = self.barrier_function(x)
 
-        if hessian_k is not None and not np.isfinite(hessian_k).all():
-            raise ValueError("Hessian matrix is not provided")
-                
         for k in range(max_iter):
-            try:
-                if self.eq_constraints_mat is not None and self.eq_constraints_mat.shape[0] > 0:
-                    # Hard equality constraints: solve KKT
-                    A = self.eq_constraints_mat
-                    n = len(x)
-                    m = A.shape[0]
-                    KKT_mat = np.block([
-                        [hessian_k, A.T],
-                        [A, np.zeros((m, m))]
-                    ])
-                    rhs = np.concatenate([-gradient_k, np.zeros(m)])
-                    sol = np.linalg.solve(KKT_mat, rhs)
-                    p_k = sol[:n]
-                else:
-                    # Standard unconstrained Newton, with fallback to GD if Hessian is singular
-                    try:
-                        p_k = -np.linalg.solve(hessian_k, gradient_k)
-                    except np.linalg.LinAlgError:
-                        # If Hessian is singular, fall back to negative gradient direction
-                        print(f"[Newton {k}] Hessian is singular, falling back to gradient descent")
-                        p_k = -gradient_k
-
-                print(f"[Newton {k}] p_k={p_k}, grad={gradient_k}, grad.T@p_k={np.dot(gradient_k, p_k)}")
-
-                alpha_k = self.backtracking(x, p_k, gradient_k)
-                if alpha_k == 0.0:
-                    print(f"[Newton {k}] Backtracking failed, exiting Newton step.")
-                    return {
-                        'x': x,
-                        'f': obj_val_k,
-                        'iter': k,
-                        'success': False
-                    }
-                
-
-                next_x = x + alpha_k * p_k
-                next_obj_val = self.barrier_function(next_x)[0]
-
-                if np.linalg.norm(next_x - x) < tol:
-                    success = True
-                    break
-                if np.linalg.norm(next_obj_val - obj_val_k) < tol:
-                    success = True
-                    break
-
-                x = next_x
-
-            except Exception as e:
-                print(f"[Newton {k}] Error: {e}")
-                # Check if we're actually at optimum
-                if np.linalg.norm(gradient_k) < tol:
-                    return {
-                        'x': x,
-                        'f': obj_val_k,
-                        'iter': k,
-                        'success': True
-                    }
-                return {
-                    'x': x,
-                    'f': obj_val_k,
-                    'iter': k,
-                    'success': False
-                }
-
+            rhs = pk_resolver(x)
+            p_k = np.linalg.solve(b_k, rhs)
+            alpha_k = self.backtracking(x, p_k)
+            if alpha_k * np.linalg.norm(p_k) < param_tol:
+                success = True
+                break
+            x_new = x + alpha_k * p_k
+            obj_val_new, gradient_new, hessian_new = self.barrier_function(x_new)
+            if abs(obj_val_new - obj_val_k) < obj_tol:
+                x, obj_val_k = x_new, obj_val_new
+                success = True
+                break
+            x, obj_val_k = x_new, obj_val_new
+            
         return {
             'x': x,
             'f': obj_val_k,
@@ -167,65 +137,55 @@ class InteriorPoint:
         Solve the constrained optimization problem using interior point method
         """
         x = x0.copy()
-        mu = 10.0
+        success = False
 
         # Initialize tracking lists
         self.central_path = [(x.copy(), self.func(x)[0])]
         self.objective_values = [self.func(x)[0]]
         
+        m = len(self.ineq_constraints) # number of inequality constraints
+
+        if m and any(c(x)[0] >= 0 for c in self.ineq_constraints):
+            raise ValueError("[InteriorPoint Minimizer]x0 is not strictly feasible (some g_i(x0) ≥ 0).")
+        if self.eq_constraints_mat is not None and self.eq_constraints_mat.shape[0] > 0 and np.linalg.norm(self.eq_constraints_mat @ x - self.eq_constraints_rhs) > 1e-10:
+            raise ValueError("[InteriorPoint Minimizer] x0 does not satisfy the equality constraints.")
+
         i = 0
 
         # Outer loop
         max_outer_iter = 100
         while i < max_outer_iter:
-            # Inner loop
-            newton_result = self.newton_step(x, tol)
-                        
+            phi_t = self.barrier_function(x)
+            pk_resolver = self.kkt_solver()
+
+
+            newton_result = self.newton_step(x, 
+                                             np.identity(x.size), 
+                                             pk_resolver, 
+                                             self.backtracking)
+
             if not newton_result['success']:
-                print(f"\nInner minimization failed at iteration {i}")
-                return {
-                    'x': x,
-                    'f': self.func(x)[0],
-                    'iter': i,
-                    'success': False
-                }
-                
-            x = newton_result['x']
+                raise RuntimeError(f"Inner Newton failed to converge at iteration {i}")
             
-            # Track central path and objective values
+            x = newton_result['x']
             self.central_path.append((x.copy(), self.func(x)[0]))
             self.objective_values.append(self.func(x)[0])
             
-            # Check equality constraint violation
-            eq_violation = 0
-            if self.eq_constraints_mat is not None and len(self.eq_constraints_mat) > 0:
-                eq_residual = self.eq_constraints_mat @ x - self.eq_constraints_rhs
-                eq_violation = np.linalg.norm(eq_residual)
+            if m == 0 or m / self.current_t < tol:
+                print("[InteriorPoint Minimizer] Duality gap small enough – terminating.")
+                success = True
+                break
             
-            # Check if we're close enough to the solution
-            if len(self.ineq_constraints) / self.current_t < tol and eq_violation < tol:
-                print("\nConverged! All constraints satisfied within tolerance.")
-                return {
-                    'x': x,
-                    'f': self.func(x)[0],
-                    'iter': i,
-                    'success': True
-                }
-                
-            self.current_t *= mu
-            i += 1  
-    
-        print("\nReached maximum iterations without convergence")
-        # If the loop exits due to max_outer_iter, check feasibility
-        eq_violation = 0
-        if self.eq_constraints_mat is not None and len(self.eq_constraints_mat) > 0:
-            eq_residual = self.eq_constraints_mat @ x - self.eq_constraints_rhs
-            eq_violation = np.linalg.norm(eq_residual)
-        if all(g(x)[0] < -1e-8 for g in self.ineq_constraints) and eq_violation < tol:
-            return {'x': x, 'f': self.func(x)[0], 'iter': i, 'success': True}
-        else:
-            return {'x': x, 'f': self.func(x)[0], 'iter': i, 'success': False}
-
+            self.current_t *= self.mu
+            i += 1
+        
+        return {
+            'x': x,
+            'f': self.func(x)[0],
+            'iter': i,
+            'success': success
+        }
+         
     def plot_feasible_region_and_path(self, x_range, y_range, num_points=100):
         """Plot the feasible region and central path"""
         plt.figure(figsize=(10, 8))
