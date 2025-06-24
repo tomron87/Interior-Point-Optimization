@@ -193,58 +193,100 @@ class InteriorPoint:
         }
          
     def plot_feasible_region_and_path(self, x_range, y_range, num_points=100):
-        """Plot the feasible region and central path, and return the matplotlib Figure object."""
-        fig, ax = plt.subplots(figsize=(10, 8))
+        from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+        from matplotlib.patches import Polygon
+
+        def find_feasible_polygon(x_bounds, y_bounds, num_points=100):
+            """Compute vertices of the feasible region (intersection of half-planes)."""
+            # Generate a grid of points over the plotting area
+            x = np.linspace(x_bounds[0], x_bounds[1], num_points)
+            y = np.linspace(y_bounds[0], y_bounds[1], num_points)
+            X, Y = np.meshgrid(x, y)
+            points = np.vstack([X.ravel(), Y.ravel()]).T
+
+            # Keep only points satisfying ALL constraints
+            mask = np.ones(points.shape[0], dtype=bool)
+            for g in self.ineq_constraints:
+                mask &= np.array([g(pt)[0] <= 0 for pt in points])
+            feasible_points = points[mask]
+
+            if len(feasible_points) < 3:
+                return None  # Not enough points to form a polygon
+
+            # Order points to form the polygon (ConvexHull)
+            from scipy.spatial import ConvexHull
+            hull = ConvexHull(feasible_points)
+            polygon = feasible_points[hull.vertices]
+            return polygon
         
-        # Create grid for plotting
-        x = np.linspace(x_range[0], x_range[1], num_points)
-        y = np.linspace(y_range[0], y_range[1], num_points)
-        X, Y = np.meshgrid(x, y)
-        
-        # Determine problem dimension from first constraint
         try:
-            # Try with 3D point first
             test_point = np.zeros(3)
             g_val, g_grad, _ = self.ineq_constraints[0](test_point)
             is_3d = True
-        except ValueError:
-            # If that fails, it's a 2D problem
+        except Exception:
             is_3d = False
-        
-        # Plot inequality constraints
-        for g in self.ineq_constraints:
-            Z = np.zeros_like(X)
-            for i in range(len(x)):
-                for j in range(len(y)):
-                    point = np.array([X[i,j], Y[i,j]])
-                    if is_3d:
-                        point = np.pad(point, (0, 1))  # Add zero for z-coordinate
-                    Z[i,j] = g(point)[0]
-            ax.contour(X, Y, Z, levels=[0], colors='blue', alpha=0.5)
-            ax.fill_between(x, y_range[0], y_range[1], where=Z[0,:] <= 0, color='blue', alpha=0.1)
-        
-        # Plot equality constraints
-        if self.eq_constraints_mat is not None:
-            for i in range(len(self.eq_constraints_mat)):
-                a, b = self.eq_constraints_mat[i][:2]
-                c = self.eq_constraints_rhs[i]
-                if b != 0:
-                    y_eq = (c - a*x) / b
-                    ax.plot(x, y_eq, 'r--', label=f'Eq {i+1}')
-        
-        # Plot central path (projected to 2D if needed)
-        path_points = np.array([point[:2] for point, _ in self.central_path])
-        ax.plot(path_points[:,0], path_points[:,1], 'g-', label='Central Path', linewidth=2)
-        ax.plot(path_points[-1,0], path_points[-1,1], 'ro', label='Final Solution')
-        
-        ax.set_title('Feasible Region and Central Path')
-        ax.set_xlabel('x')
-        ax.set_ylabel('y')
-        ax.legend()
-        ax.grid(True)
-        # Do not show or pause, just return the figure
-        return fig
 
+        if is_3d:
+            fig = plt.figure(figsize=(10, 8))
+            ax = fig.add_subplot(111, projection='3d')
+            # Plot the feasible triangle for the standard QP (simplex)
+            verts = np.array([
+                [1, 0, 0],
+                [0, 1, 0],
+                [0, 0, 1]
+            ])
+            tri = Poly3DCollection([verts], alpha=0.2, facecolor='blue')
+            ax.add_collection3d(tri)
+            # Plot the central path
+            path_points = np.array([point for point, _ in self.central_path])
+            ax.plot(path_points[:,0], path_points[:,1], path_points[:,2], 'o-', color='tab:blue', label='central path')
+            ax.scatter(path_points[-1,0], path_points[-1,1], path_points[-1,2], color='red', marker='*', s=200, label='final sol.')
+            ax.set_xlabel('x')
+            ax.set_ylabel('y')
+            ax.set_zlabel('z')
+            ax.set_title('QP - feasible triangle & central path')
+            ax.legend()
+            ax.grid(True)
+            return fig
+
+        else:
+            # 2D case
+            fig, ax = plt.subplots(figsize=(10, 8))
+            x = np.linspace(x_range[0], x_range[1], num_points)
+            y = np.linspace(y_range[0], y_range[1], num_points)
+            X, Y = np.meshgrid(x, y)
+            polygon = find_feasible_polygon(x_range, y_range)
+            if polygon is not None:
+                poly_patch = Polygon(polygon, color='gray', alpha=0.3, zorder=1)
+                ax.add_patch(poly_patch)
+            for g in self.ineq_constraints:
+                Z = np.zeros_like(X)
+                for i in range(len(x)):
+                    for j in range(len(y)):
+                        point = np.array([X[i,j], Y[i,j]])
+                        Z[i,j] = g(point)[0]
+                ax.contour(X, Y, Z, levels=[0], colors='blue', alpha=0.5)
+                # Optionally fill the feasible region using the intersection polygon for clarity
+
+            # Plot equality constraints
+            if self.eq_constraints_mat is not None:
+                for i in range(len(self.eq_constraints_mat)):
+                    a, b = self.eq_constraints_mat[i][:2]
+                    c = self.eq_constraints_rhs[i]
+                    if b != 0:
+                        y_eq = (c - a*x) / b
+                        ax.plot(x, y_eq, 'r--', label=f'Eq {i+1}')
+            # Plot central path (projected to 2D)
+            path_points = np.array([point[:2] for point, _ in self.central_path])
+            ax.plot(path_points[:,0], path_points[:,1], 'g-', label='Central Path', linewidth=2)
+            ax.plot(path_points[-1,0], path_points[-1,1], 'ro', label='Final Solution')
+            ax.set_title('Feasible Region and Central Path')
+            ax.set_xlabel('x')
+            ax.set_ylabel('y')
+            ax.legend()
+            ax.grid(True)
+            return fig
+    
     def plot_objective_values(self):
         """Plot objective values vs iteration number and return the matplotlib Figure object."""
         fig, ax = plt.subplots(figsize=(10, 6))
