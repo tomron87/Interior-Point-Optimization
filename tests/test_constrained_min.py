@@ -2,10 +2,95 @@ import unittest
 import numpy as np
 import sys
 import os
+import pandas as pd
 from datetime import datetime
 from src.constrained_min import InteriorPoint
 from tests.examples import quadratic, quadratic_ineq1, quadratic_ineq2, quadratic_ineq3, linear, linear_ineq1, linear_ineq2, linear_ineq3, linear_ineq4
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
+def draw_3d_path_figure(df: pd.DataFrame, title: str = "Central path"):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+
+    # triangle
+    verts = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+    ax.add_collection3d(
+        Poly3DCollection([verts], alpha=0.25, facecolor="tab:blue", edgecolor="k")
+    )
+
+    # central path
+    ax.plot(df.iloc[:, 0], df.iloc[:, 1], df.iloc[:, 2], "-o", lw=1.5, ms=5, label="central path")
+    ax.plot(
+        df.iloc[-1, 0],
+        df.iloc[-1, 1],
+        df.iloc[-1, 2],
+        "r*",
+        ms=12,
+        label="final solution",
+    )
+
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("z")
+    ax.set_title(title)
+    ax.legend()
+    return fig
+
+def plot_feasible_region_and_path_2d(df: pd.DataFrame, ineq_constraints, title="Central path"):
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    grid_res = 400
+    padding = 0.1
+    x_lo, x_hi = df.iloc[:, 0].min(), df.iloc[:, 0].max()
+    y_lo, y_hi = df.iloc[:, 1].min(), df.iloc[:, 1].max()
+    x_pad = (x_hi - x_lo) * padding or 1.0
+    y_pad = (y_hi - y_lo) * padding or 1.0
+    x_lo, x_hi = x_lo - x_pad, x_hi + x_pad
+    y_lo, y_hi = y_lo - y_pad, y_hi + y_pad
+
+    xx, yy = np.meshgrid(
+        np.linspace(x_lo, x_hi, grid_res),
+        np.linspace(y_lo, y_hi, grid_res),
+    )
+
+    # Stack grid to shape (N*N, 2)
+    grid_pts = np.stack([xx.ravel(), yy.ravel()], axis=-1)  # shape (N*N, 2)
+
+    feas = np.ones(grid_pts.shape[0], dtype=bool)
+    for g in ineq_constraints:
+        feas &= np.array([g(pt)[0] <= 0 for pt in grid_pts])
+
+    # Reshape feas to (grid_res, grid_res)
+    feas = feas.reshape(xx.shape)
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.imshow(
+        feas.astype(float),
+        extent=[x_lo, x_hi, y_lo, y_hi],
+        origin="lower",
+        cmap="Greys",
+        alpha=0.3,
+        aspect="auto",
+    )
+    ax.plot(df.iloc[:, 0], df.iloc[:, 1], "-o", ms=5, lw=1.5, label="central path")
+    ax.plot(df.iloc[-1, 0], df.iloc[-1, 1], "r*", ms=12, label="final solution")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(True, ls="--", lw=0.5)
+    return fig
+def plot_objective_values(objective_values):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    iterations = range(len(objective_values))
+    ax.plot(iterations, objective_values, 'b-', linewidth=2)
+    ax.set_title('Objective Value vs Iteration')
+    ax.set_xlabel('Iteration')
+    ax.set_ylabel('Objective Value')
+    ax.grid(True)
+    return fig
 class TestConstrainedMin(unittest.TestCase):
     def setUp(self):
         # Create logs directory if it doesn't exist
@@ -57,9 +142,10 @@ class TestConstrainedMin(unittest.TestCase):
         result = minimizer.minimize(x0, tol=tol)
         
         # Plot results and save to file
-        fig1 = minimizer.plot_feasible_region_and_path(self.plot_ranges[0], self.plot_ranges[1])
+        df = pd.DataFrame(result['path'][0])
+        fig1 = draw_3d_path_figure(df, title=f"Quadratic Problem - Feasible Region")
         fig1.savefig(os.path.join(self.plots_dir, f"{self._testMethodName}_feasible_region.png"))
-        fig2 = minimizer.plot_objective_values()
+        fig2 = plot_objective_values(result['path'][1])
         fig2.savefig(os.path.join(self.plots_dir, f"{self._testMethodName}_objective_values.png"))
         
         # Print final values
@@ -90,9 +176,10 @@ class TestConstrainedMin(unittest.TestCase):
         result = minimizer.minimize(x0, tol=tol)
         
         # Plot results and save to file
-        fig1 = minimizer.plot_feasible_region_and_path(self.plot_ranges[0], self.plot_ranges[1])
+        df = pd.DataFrame(result['path'][0])
+        fig1 = plot_feasible_region_and_path_2d(df, ineq_constraints, title=f"Linear Problem - Feasible Region")    
         fig1.savefig(os.path.join(self.plots_dir, f"{self._testMethodName}_feasible_region.png"))
-        fig2 = minimizer.plot_objective_values()
+        fig2 = plot_objective_values(result['path'][1])
         fig2.savefig(os.path.join(self.plots_dir, f"{self._testMethodName}_objective_values.png"))
         
         # Print final values
