@@ -13,6 +13,11 @@ class TestConstrainedMin(unittest.TestCase):
         if not os.path.exists(self.logs_dir):
             os.makedirs(self.logs_dir)
             
+        # Create plots directory if it doesn't exist
+        self.plots_dir = 'plots'
+        if not os.path.exists(self.plots_dir):
+            os.makedirs(self.plots_dir)
+            
         # Set up logging to file
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         self.log_file = os.path.join(self.logs_dir, f'test_results_{self._testMethodName}_{timestamp}.log')
@@ -53,9 +58,9 @@ class TestConstrainedMin(unittest.TestCase):
         
         # Plot results and save to file
         fig1 = minimizer.plot_feasible_region_and_path(self.plot_ranges[0], self.plot_ranges[1])
-        fig1.savefig(f"{self._testMethodName}_feasible_region.png")
+        fig1.savefig(os.path.join(self.plots_dir, f"{self._testMethodName}_feasible_region.png"))
         fig2 = minimizer.plot_objective_values()
-        fig2.savefig(f"{self._testMethodName}_objective_values.png")
+        fig2.savefig(os.path.join(self.plots_dir, f"{self._testMethodName}_objective_values.png"))
         
         # Print final values
         minimizer.print_final_values(result['x'])
@@ -86,9 +91,9 @@ class TestConstrainedMin(unittest.TestCase):
         
         # Plot results and save to file
         fig1 = minimizer.plot_feasible_region_and_path(self.plot_ranges[0], self.plot_ranges[1])
-        fig1.savefig(f"{self._testMethodName}_feasible_region.png")
+        fig1.savefig(os.path.join(self.plots_dir, f"{self._testMethodName}_feasible_region.png"))
         fig2 = minimizer.plot_objective_values()
-        fig2.savefig(f"{self._testMethodName}_objective_values.png")
+        fig2.savefig(os.path.join(self.plots_dir, f"{self._testMethodName}_objective_values.png"))
         
         # Print final values
         minimizer.print_final_values(result['x'])

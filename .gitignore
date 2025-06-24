@@ -1,6 +1,7 @@
 .DS_Store
 EX02_programming.pdf
 logs/
+plots/
 venv/
 __pycache__/
 src/__pycache__/
